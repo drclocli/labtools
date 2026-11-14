@@ -48,3 +48,10 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# macOS
+.DS_Store
+
+# Radar plots: personal data and generated figures stay local
+radar_plots/data/
+radar_plots/output/

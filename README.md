@@ -55,28 +55,29 @@ Then, in R:
 install.packages("ggplot2")
 
 # Load a tool
-source("R/radar_plot.R")
+source("radar_plots/radar_plot.R")
 ```
 
 ---
 
 ## Repository layout
 
-Planned structure (to be adjusted as the project grows):
+Each tool lives in its own folder, with its code, its input template, and local `data/` and `output/` folders, so the data of one tool never mixes with another's:
 
 ```
 labtools/
-├── R/              # R functions (one file per tool or topic)
-├── scripts/        # Ready-to-run analysis scripts
-├── data/
-│   ├── raw/        # Raw data (untouched; not versioned if large)
-│   └── processed/  # Cleaned data
-├── output/         # Generated figures, tables and reports
-├── templates/      # Input templates to fill in (one per tool)
-├── tests/          # Function tests
+├── radar_plots/              # Radar charts (cytokines / oxylipins)
+│   ├── radar_plot.R          #   functions
+│   ├── radar_cytokines.R     #   ready-to-run script
+│   ├── radar_template.csv    #   input template to copy
+│   ├── data/                 #   your input files (not versioned)
+│   └── output/               #   generated figures (not versioned)
+├── <next_tool>/              # Same layout for each new tool
 ├── README.md
 └── LICENSE
 ```
+
+The `data/` and `output/` folders of each tool are listed in `.gitignore`: lab data and figures stay on your computer and are never pushed to GitHub.
 
 ---
 
@@ -84,14 +85,14 @@ labtools/
 
 | Tool | Role | Input | Output | Status |
 |------|------|-------|--------|--------|
-| [`radar_from_file()`](#radar_from_file--radar-charts-of-mediators-vs-a-reference) | Radar charts of cytokines / oxylipins per condition, as fold change vs a reference, with significance stars | CSV ([template](templates/radar_template.csv)) | One PNG + PDF per group, CSV of normalised values | ✅ |
+| [`radar_from_file()`](#radar_from_file--radar-charts-of-mediators-vs-a-reference) | Radar charts of cytokines / oxylipins per condition, as fold change vs a reference, with significance stars | CSV ([template](radar_plots/radar_template.csv)) | One PNG + PDF per group, CSV of normalised values | ✅ |
 
 ### Detailed description
 
 #### `radar_from_file()` — radar charts of mediators vs a reference
 
 - **Purpose**: R version of the Excel template *Modele_radar_ATB_cytokines_oxylipines*. Draws one radar per group of conditions; each branch is a mediator (cytokine, oxylipin…) and each curve a condition, expressed as log2 fold change (or fold change) vs the reference condition. The reference is the grey dashed polygon (0 in log2 FC, 1 in FC). Branch labels are green for anti-inflammatory / pro-resolving mediators and red for pro-inflammatory ones.
-- **Files**: [`R/radar_plot.R`](R/radar_plot.R) (functions), [`scripts/radar_cytokines.R`](scripts/radar_cytokines.R) (ready to run), [`templates/radar_template.csv`](templates/radar_template.csv) (input template, illustrative values).
+- **Folder**: [`radar_plots/`](radar_plots/), containing [`radar_plot.R`](radar_plots/radar_plot.R) (functions), [`radar_cytokines.R`](radar_plots/radar_cytokines.R) (ready to run), [`radar_template.csv`](radar_plots/radar_template.csv) (input template, illustrative values), `data/` (your files) and `output/` (figures).
 - **Input**: a CSV file (comma, or semicolon with decimal comma as exported by a French Excel), one row per condition:
 
   | Condition | Groupe | IL-10 | … | 5-HETE | IL-10_sig | … | 5-HETE_sig |
@@ -105,7 +106,7 @@ labtools/
   - Value columns = mean concentrations (cytokines) or mean peak areas (oxylipins). Branch order on the radar = column order, starting at the top and going counter-clockwise (as in the Excel file). Any number of branches (≥ 3).
   - `<branch>_sig` columns (optional): `*`, `**`, `***` or `****` vs the reference, empty if ns.
   - `Catégorie` row (optional): `anti` or `pro` per branch, to colour the labels.
-- **Output** (in `output/radar/` by default): `radar_01_<group>.png/.pdf`, … and `valeurs_normalisees_log2fc.csv` (equivalent of the *2_Normalisé* sheet).
+- **Output** (in `radar_plots/output/` by default): `radar_01_<group>.png/.pdf`, … and `valeurs_normalisees_log2fc.csv` (equivalent of the *2_Normalisé* sheet).
 - **Where the stars go**: radar with a single condition → next to the branch name; with several conditions → in the legend, e.g. `Ciprofloxacin (IL-10 ***, RvD1 *, …)`.
 - **Main parameters**:
   - `normalisation`: `"log2fc"` (default) or `"fc"`.
@@ -113,15 +114,29 @@ labtools/
   - `limits`: scale, e.g. `c(-3, 10)` as in the Excel file; `NULL` (default) = automatic, shared by all radars.
   - `step`: spacing of the grid rings (default 2 in log2 FC).
   - `formats`, `width`, `height`, `dpi`, `title`, `clockwise`.
-- **Example**:
+- **How to use**, from the `labtools` folder:
 
-  ```bash
-  Rscript scripts/radar_cytokines.R data/raw/my_data.csv output/radar
-  ```
+  1. Copy the template into the data folder (once):
+
+     ```bash
+     mkdir -p radar_plots/data
+     cp radar_plots/radar_template.csv radar_plots/data/mes_donnees.csv
+     ```
+
+  2. Open `radar_plots/data/mes_donnees.csv` in Excel, fill it in, and save as *CSV UTF-8*.
+  3. Run the script; the figures land in `radar_plots/output/`:
+
+     ```bash
+     Rscript radar_plots/radar_cytokines.R
+     ```
+
+     Another file or output folder can be given: `Rscript radar_plots/radar_cytokines.R radar_plots/data/other.csv radar_plots/output/other`. Settings (scale, stars, FC vs log2 FC) are at the top of `radar_cytokines.R`.
+
+  From R:
 
   ```r
-  source("R/radar_plot.R")
-  plots <- radar_from_file("data/raw/my_data.csv", limits = c(-3, 10))
+  source("radar_plots/radar_plot.R")
+  plots <- radar_from_file("radar_plots/data/mes_donnees.csv", limits = c(-3, 10))
   plots[["ATB autre"]]  # ggplot object, can be further customised
   ```
 
@@ -174,7 +189,7 @@ Describe here the formats produced in the lab and supported by the tools:
 
 | Source / instrument | Format | Main columns | Notes |
 |---------------------|--------|--------------|-------|
-| Mean concentrations / peak areas per condition (ELISA, LC-MS oxylipins) | CSV | `Condition`, `Groupe`, one column per mediator, optional `<mediator>_sig` | Input of `radar_from_file()`; see [templates/radar_template.csv](templates/radar_template.csv) |
+| Mean concentrations / peak areas per condition (ELISA, LC-MS oxylipins) | CSV | `Condition`, `Groupe`, one column per mediator, optional `<mediator>_sig` | Input of `radar_from_file()`; see [radar_plots/radar_template.csv](radar_plots/radar_template.csv) |
 
 > ⚠️ Do not commit sensitive or confidential data to this repository.
 
@@ -183,7 +198,7 @@ Describe here the formats produced in the lab and supported by the tools:
 ## Adding a new tool
 
 1. Create a dedicated branch: `git checkout -b tool/<name>`
-2. Write the function in `R/` and document it (comments or [roxygen2](https://roxygen2.r-lib.org/)).
+2. Create a folder `<tool_name>/` with the code, an input template, and `data/` + `output/` folders (add them to `.gitignore`). Document the code (comments or [roxygen2](https://roxygen2.r-lib.org/)).
 3. Add a usage example and, if possible, a test in `tests/`.
 4. Update the [Tools](#tools) table and the detailed description in this README.
 5. Open a pull request to `main`.

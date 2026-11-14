@@ -13,8 +13,8 @@
 # Dependency: ggplot2.
 #
 # Quick use:
-#   source("R/radar_plot.R")
-#   plots <- radar_from_file("my_data.csv", out_dir = "output/radar")
+#   source("radar_plots/radar_plot.R")
+#   plots <- radar_from_file("radar_plots/data/mes_donnees.csv", out_dir = "radar_plots/output")
 # =============================================================================
 
 # ---- Default settings -------------------------------------------------------
@@ -37,7 +37,7 @@ RADAR_HIDDEN_GROUP    <- c("ne pas afficher", "hide")
 
 #' Read the input table (CSV, comma or semicolon separated).
 #'
-#' Expected layout (one row per condition; see templates/radar_template.csv):
+#' Expected layout (one row per condition; see radar_plots/radar_template.csv):
 #'   Condition | Groupe | <branch 1> | ... | <branch n> | <branch 1>_sig | ... | <branch n>_sig
 #' - exactly one row whose Groupe is "Référence": the reference condition;
 #' - optional row whose Condition is "Catégorie": "anti" / "pro" per branch
@@ -337,7 +337,7 @@ auto_limits <- function(norm, ref_value, step) {
 #' @param width,height  figure size in inches.
 #' @param title         TRUE = group name as title, FALSE = no title.
 #' @return a named list of ggplot objects (one per group), invisibly.
-radar_from_file <- function(path, out_dir = "output/radar",
+radar_from_file <- function(path, out_dir = "radar_plots/output",
                             normalisation = c("log2fc", "fc"),
                             show_stars = TRUE, limits = NULL, step = NULL,
                             formats = c("png", "pdf"), width = 9, height = 6,
