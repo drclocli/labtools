@@ -37,9 +37,9 @@ The goal is to keep analyses **reproducible**, **documented** and **shared** acr
 
 ### Requirements
 
-- [R](https://cran.r-project.org/) (version ≥ *TODO*)
+- [R](https://cran.r-project.org/) (version ≥ 4.1; on macOS: `brew install r`)
 - [RStudio](https://posit.co/download/rstudio-desktop/) (recommended)
-- Required R packages: *TODO* (e.g. `tidyverse`, `readxl`…)
+- Required R packages: `ggplot2` (≥ 3.5)
 
 ### Getting the project
 
@@ -51,11 +51,11 @@ cd labtools
 Then, in R:
 
 ```r
-# Install dependencies (adjust as needed)
-install.packages(c("tidyverse", "readxl"))
+# Install dependencies
+install.packages("ggplot2")
 
-# Load the tools
-source("R/<file_name>.R")
+# Load a tool
+source("R/radar_plot.R")
 ```
 
 ---
@@ -72,6 +72,7 @@ labtools/
 │   ├── raw/        # Raw data (untouched; not versioned if large)
 │   └── processed/  # Cleaned data
 ├── output/         # Generated figures, tables and reports
+├── templates/      # Input templates to fill in (one per tool)
 ├── tests/          # Function tests
 ├── README.md
 └── LICENSE
@@ -83,13 +84,52 @@ labtools/
 
 | Tool | Role | Input | Output | Status |
 |------|------|-------|--------|--------|
-| *TODO* | | | | 🚧 |
+| [`radar_from_file()`](#radar_from_file--radar-charts-of-mediators-vs-a-reference) | Radar charts of cytokines / oxylipins per condition, as fold change vs a reference, with significance stars | CSV ([template](templates/radar_template.csv)) | One PNG + PDF per group, CSV of normalised values | ✅ |
 
 ### Detailed description
 
-Each tool is documented using the template below.
+#### `radar_from_file()` — radar charts of mediators vs a reference
 
-#### `tool_name()` — *TODO*
+- **Purpose**: R version of the Excel template *Modele_radar_ATB_cytokines_oxylipines*. Draws one radar per group of conditions; each branch is a mediator (cytokine, oxylipin…) and each curve a condition, expressed as log2 fold change (or fold change) vs the reference condition. The reference is the grey dashed polygon (0 in log2 FC, 1 in FC). Branch labels are green for anti-inflammatory / pro-resolving mediators and red for pro-inflammatory ones.
+- **Files**: [`R/radar_plot.R`](R/radar_plot.R) (functions), [`scripts/radar_cytokines.R`](scripts/radar_cytokines.R) (ready to run), [`templates/radar_template.csv`](templates/radar_template.csv) (input template, illustrative values).
+- **Input**: a CSV file (comma, or semicolon with decimal comma as exported by a French Excel), one row per condition:
+
+  | Condition | Groupe | IL-10 | … | 5-HETE | IL-10_sig | … | 5-HETE_sig |
+  |-----------|--------|-------|---|--------|-----------|---|------------|
+  | Catégorie | | anti | … | pro | | | |
+  | Non traité | Référence | 90.7 | … | 2629816 | | | |
+  | Colistin | ATB paroi/membrane | 12055.9 | … | 566985 | ** | … | * |
+
+  - `Groupe` = `Référence` on exactly one row: the reference condition (needed for the fold change, not drawn as a condition).
+  - `Groupe` = any other text: one radar per group, conditions drawn in table order (up to 8 per radar). `Ne pas afficher` or empty = row ignored.
+  - Value columns = mean concentrations (cytokines) or mean peak areas (oxylipins). Branch order on the radar = column order, starting at the top and going counter-clockwise (as in the Excel file). Any number of branches (≥ 3).
+  - `<branch>_sig` columns (optional): `*`, `**`, `***` or `****` vs the reference, empty if ns.
+  - `Catégorie` row (optional): `anti` or `pro` per branch, to colour the labels.
+- **Output** (in `output/radar/` by default): `radar_01_<group>.png/.pdf`, … and `valeurs_normalisees_log2fc.csv` (equivalent of the *2_Normalisé* sheet).
+- **Where the stars go**: radar with a single condition → next to the branch name; with several conditions → in the legend, e.g. `Ciprofloxacin (IL-10 ***, RvD1 *, …)`.
+- **Main parameters**:
+  - `normalisation`: `"log2fc"` (default) or `"fc"`.
+  - `show_stars`: `TRUE` (default) / `FALSE`.
+  - `limits`: scale, e.g. `c(-3, 10)` as in the Excel file; `NULL` (default) = automatic, shared by all radars.
+  - `step`: spacing of the grid rings (default 2 in log2 FC).
+  - `formats`, `width`, `height`, `dpi`, `title`, `clockwise`.
+- **Example**:
+
+  ```bash
+  Rscript scripts/radar_cytokines.R data/raw/my_data.csv output/radar
+  ```
+
+  ```r
+  source("R/radar_plot.R")
+  plots <- radar_from_file("data/raw/my_data.csv", limits = c(-3, 10))
+  plots[["ATB autre"]]  # ggplot object, can be further customised
+  ```
+
+- **Known limitations**: means only (the fold change is computed on the means, as in the Excel file); stars are not computed, they come from your own post-hoc test (e.g. Dunnett vs untreated in Prism, or FDR for oxylipins). The *5_Source_oxylipines* traceability sheet of the Excel file has no chart and is not reproduced. Remember to state the test and thresholds in the figure legend (* p < 0.05; ** p < 0.01; *** p < 0.001; **** p < 0.0001).
+
+#### Template for documenting a new tool
+
+#### `tool_name()` — *short description*
 
 - **Purpose**: what the tool does, in one or two sentences.
 - **Input**: expected file or object type (e.g. CSV exported from instrument X).
@@ -134,7 +174,7 @@ Describe here the formats produced in the lab and supported by the tools:
 
 | Source / instrument | Format | Main columns | Notes |
 |---------------------|--------|--------------|-------|
-| *TODO* | | | |
+| Mean concentrations / peak areas per condition (ELISA, LC-MS oxylipins) | CSV | `Condition`, `Groupe`, one column per mediator, optional `<mediator>_sig` | Input of `radar_from_file()`; see [templates/radar_template.csv](templates/radar_template.csv) |
 
 > ⚠️ Do not commit sensitive or confidential data to this repository.
 
