@@ -52,6 +52,20 @@ rsconnect/
 # macOS
 .DS_Store
 
-# Radar plots: personal data and generated figures stay local
-radar_plots/data/
-radar_plots/output/
+# R package build / check artefacts
+/labtools.Rcheck/
+/labtools_*.tar.gz
+/doc/
+/Meta/
+.Rproj.user/
+
+# Lab data and generated outputs stay local (never pushed)
+radar_plots/
+/data/
+/output/
+/sorties/
+/radar_[0-9][0-9]_*.png
+/radar_[0-9][0-9]_*.pdf
+/radar_[0-9][0-9]_*.svg
+/radar_[0-9][0-9]_*.tiff
+/valeurs_normalisees_*.csv

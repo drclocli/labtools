@@ -1,5 +1,5 @@
 # =============================================================================
-# radar_plot.R — Radar charts of mediators (cytokines, oxylipins, ...) per
+# radar.R — Radar charts of mediators (cytokines, oxylipins, ...) per
 # condition, normalised against a reference condition (e.g. "Non traité").
 #
 # R port of the Excel template "Modele_radar_ATB_cytokines_oxylipines":
@@ -10,11 +10,8 @@
 #   - significance stars: next to the branch name when the radar has a single
 #     condition, otherwise in the legend, e.g. "Ciprofloxacin (IL-6 **, ...)".
 #
-# Dependency: ggplot2.
-#
-# Quick use:
-#   source("radar_plots/radar_plot.R")
-#   plots <- radar_from_file("radar_plots/data/mes_donnees.csv", out_dir = "radar_plots/output")
+# Entry points: radar_plots() (writes files, returns their paths) and
+# radar_build() (returns the ggplot objects). CLI: exec/radar-plot.R.
 # =============================================================================
 
 # ---- Default settings -------------------------------------------------------
@@ -30,21 +27,25 @@ RADAR_SERIES_SHAPES  <- c(16, 15, 17, 18, 1, 0, 2, 5)  # circle, square, triangl
 RADAR_CATEGORY_COLOURS <- c(anti = "#1A7F3C", pro = "#C00000")
 
 # Reserved values of the "Groupe" column.
-RADAR_REFERENCE_GROUP <- c("reference", "référence")
+RADAR_REFERENCE_GROUP <- c("reference", "r\u00e9f\u00e9rence")
 RADAR_HIDDEN_GROUP    <- c("ne pas afficher", "hide")
+
+# Output formats supported by radar_plots() (svg needs the svglite package).
+RADAR_FORMATS <- c("png", "pdf", "svg", "tiff")
 
 # ---- Reading ----------------------------------------------------------------
 
-#' Read the input table (CSV, comma or semicolon separated).
-#'
-#' Expected layout (one row per condition; see radar_plots/radar_template.csv):
-#'   Condition | Groupe | <branch 1> | ... | <branch n> | <branch 1>_sig | ... | <branch n>_sig
-#' - exactly one row whose Groupe is "Référence": the reference condition;
-#' - optional row whose Condition is "Catégorie": "anti" / "pro" per branch
-#'   (colours the branch labels);
-#' - "<branch>_sig" columns (optional): *, **, *** or **** ; empty if ns.
-#' Branch order on the radar = column order.
+# Read the input table (CSV, comma or semicolon separated).
+#
+# Expected layout (one row per condition; see inst/extdata/radar_example.csv):
+#   Condition | Groupe | <branch 1> | ... | <branch n> | <branch 1>_sig | ... | <branch n>_sig
+# - exactly one row whose Groupe is "Référence": the reference condition;
+# - optional row whose Condition is "Catégorie": "anti" / "pro" per branch
+#   (colours the branch labels);
+# - "<branch>_sig" columns (optional): *, **, *** or **** ; empty if ns.
+# Branch order on the radar = column order.
 read_radar_data <- function(path) {
+  path <- check_input_file(path, ext = c("csv", "txt"))
   first <- readLines(path, n = 1, warn = FALSE, encoding = "UTF-8")
   semicolon <- lengths(regmatches(first, gregexpr(";", first))) >
                lengths(regmatches(first, gregexpr(",", first)))
@@ -58,38 +59,41 @@ read_radar_data <- function(path) {
   parse_radar_table(raw, decimal_comma = semicolon)
 }
 
-#' Split a raw data frame (all character columns) into its components.
+# Split a raw data frame (all character columns) into its components.
 parse_radar_table <- function(raw, decimal_comma = FALSE) {
   names(raw) <- trimws(names(raw))
   low <- tolower(names(raw))
   cond_col  <- match("condition", low)
   group_col <- match("groupe", low)
   if (is.na(group_col)) group_col <- match("group", low)
-  if (is.na(cond_col) || is.na(group_col))
-    stop("The table must contain the columns 'Condition' and 'Groupe'.")
+  missing_cols <- c("Condition", "Groupe")[is.na(c(cond_col, group_col))]
+  if (length(missing_cols))
+    cli::cli_abort(c("Missing required column{?s}: {.field {missing_cols}}.",
+                     "i" = "Found: {.field {names(raw)}}."))
 
   other  <- setdiff(seq_along(raw), c(cond_col, group_col))
   is_sig <- grepl("_sig$", names(raw)[other])
   branches <- names(raw)[other][!is_sig]
-  if (length(branches) < 3) stop("At least 3 branches (value columns) are needed for a radar.")
+  if (length(branches) < 3)
+    cli::cli_abort("At least 3 branches (value columns) are needed for a radar, found {length(branches)}.")
 
   raw <- raw[!(is.na(raw[[cond_col]]) & is.na(raw[[group_col]])), , drop = FALSE]
   cond  <- trimws(ifelse(is.na(raw[[cond_col]]), "", raw[[cond_col]]))
   group <- trimws(ifelse(is.na(raw[[group_col]]), "", raw[[group_col]]))
 
   # Optional "Catégorie" row
-  cat_row <- which(tolower(cond) %in% c("catégorie", "categorie", "category"))
-  categories <- setNames(rep(NA_character_, length(branches)), branches)
+  cat_row <- which(tolower(cond) %in% c("cat\u00e9gorie", "categorie", "category"))
+  categories <- stats::setNames(rep(NA_character_, length(branches)), branches)
   if (length(cat_row)) {
     categories[] <- trimws(unlist(raw[cat_row[1], branches]))
   }
 
   ref_row <- which(tolower(group) %in% RADAR_REFERENCE_GROUP)
   if (length(ref_row) != 1)
-    stop("Exactly one row must have Groupe = 'Référence' (found ", length(ref_row), ").")
+    cli::cli_abort("Exactly one row must have {.field Groupe} = {.val R\u00e9f\u00e9rence} (found {length(ref_row)}).")
 
   to_num <- function(x) {
-    x <- gsub("[[:space:] ]", "", x)
+    x <- gsub("[[:space:]\u00a0]", "", x)
     if (decimal_comma) x <- sub(",", ".", x, fixed = TRUE)
     suppressWarnings(as.numeric(x))
   }
@@ -102,9 +106,8 @@ parse_radar_table <- function(raw, decimal_comma = FALSE) {
     if (sc %in% names(raw)) {
       s <- trimws(ifelse(is.na(raw[[sc]]), "", raw[[sc]]))
       bad <- s != "" & !grepl("^\\*{1,4}$", s)
-      if (any(bad)) stop("Invalid star value in column '", sc, "': ",
-                         paste(unique(s[bad]), collapse = ", "),
-                         " (expected *, **, *** or ****).")
+      if (any(bad))
+        cli::cli_abort("Invalid star value{?s} in column {.field {sc}}: {.val {unique(s[bad])}} (expected *, **, *** or ****).")
       stars[, b] <- s
     }
   }
@@ -114,9 +117,9 @@ parse_radar_table <- function(raw, decimal_comma = FALSE) {
                !(tolower(group[keep]) %in% RADAR_HIDDEN_GROUP)]
 
   ref_values <- unlist(values[ref_row, ])
-  if (any(is.na(ref_values) | ref_values <= 0))
-    stop("The reference row must contain a positive value for every branch: ",
-         paste(branches[is.na(ref_values) | ref_values <= 0], collapse = ", "))
+  bad_ref <- branches[is.na(ref_values) | ref_values <= 0]
+  if (length(bad_ref))
+    cli::cli_abort("The reference row must contain a positive value for every branch: {.field {bad_ref}}.")
 
   list(
     branches   = branches,
@@ -131,7 +134,7 @@ parse_radar_table <- function(raw, decimal_comma = FALSE) {
 
 # ---- Normalisation ----------------------------------------------------------
 
-#' Fold change (or log2 fold change) of each condition vs the reference.
+# Fold change (or log2 fold change) of each condition vs the reference.
 normalise_radar <- function(dat, normalisation = c("log2fc", "fc")) {
   normalisation <- match.arg(normalisation)
   ratio <- sweep(dat$values, 2, dat$reference$values, "/")
@@ -175,32 +178,29 @@ category_colour <- function(cat) {
   out
 }
 
-#' Draw one radar.
-#'
-#' @param norm     matrix (conditions x branches) of normalised values.
-#' @param stars    matrix of stars, same shape as `norm`.
-#' @param branches branch names (column order = order around the radar).
-#' @param categories category of each branch ("anti"/"pro"/NA).
-#' @param ref_name name of the reference condition (legend).
-#' @param ref_value 0 (log2 FC) or 1 (FC).
-#' @param limits   c(min, max) of the radial scale.
-#' @param step     spacing of the grid rings.
-#' @param show_stars TRUE to show significance stars.
-#' @param clockwise FALSE (default, as in the Excel file): branches go
-#'                 counter-clockwise from the top.
-#' @param title    plot title (NULL for none).
-#' @param legend_width wrap width (characters) of legend labels.
+# Draw one radar.
+#
+# norm       matrix (conditions x branches) of normalised values.
+# stars      matrix of stars, same shape as `norm`.
+# branches   branch names (column order = order around the radar).
+# categories category of each branch ("anti"/"pro"/NA).
+# ref_name   name of the reference condition (legend).
+# ref_value  0 (log2 FC) or 1 (FC).
+# limits     c(min, max) of the radial scale.
+# step       spacing of the grid rings.
+# show_stars TRUE to show significance stars.
+# clockwise  FALSE (default, as in the Excel file): branches go
+#            counter-clockwise from the top.
+# title      plot title (NULL for none).
+# legend_width wrap width (characters) of legend labels.
 plot_radar <- function(norm, stars, branches, categories, ref_name,
                        ref_value = 0, limits = c(-3, 10), step = 2,
                        show_stars = TRUE, clockwise = FALSE, title = NULL,
                        legend_width = 45, base_size = 11) {
-  if (!requireNamespace("ggplot2", quietly = TRUE))
-    stop("Package 'ggplot2' is required: install.packages('ggplot2')")
-
   n_b <- length(branches)
   n_c <- nrow(norm)
   if (n_c > length(RADAR_SERIES_COLOURS))
-    stop("At most ", length(RADAR_SERIES_COLOURS), " conditions per radar.")
+    cli::cli_abort("At most {length(RADAR_SERIES_COLOURS)} conditions per radar (group {.val {title}} has {n_c}).")
   lo <- limits[1]; hi <- limits[2]
 
   # Geometry: first branch at the top, then counter-clockwise (or clockwise).
@@ -230,7 +230,7 @@ plot_radar <- function(norm, stars, branches, categories, ref_name,
     legend_names <- ifelse(st == "", cond_names, paste0(cond_names, " (", st, ")"))
   }
   legend_names <- unname(vapply(legend_names, wrap_legend, "", width = legend_width))
-  ref_label <- paste0(ref_name, " (référence)")
+  ref_label <- paste0(ref_name, " (r\u00e9f\u00e9rence)")
   series_levels <- c(legend_names, ref_label)
 
   # Data of the curves (closed polygon; NA = gap in the line)
@@ -263,10 +263,10 @@ plot_radar <- function(norm, stars, branches, categories, ref_name,
     vjust = ifelse(abs(sin(theta)) < 0.15, 0.5, ifelse(sin(theta) > 0, 0, 1))
   )
 
-  cols   <- setNames(c(RADAR_SERIES_COLOURS[seq_len(n_c)], "#7F7F7F"), series_levels)
-  shapes <- setNames(c(RADAR_SERIES_SHAPES[seq_len(n_c)], NA), series_levels)
-  ltys   <- setNames(c(rep("solid", n_c), "dashed"), series_levels)
-  lwds   <- setNames(c(rep(0.9, n_c), 0.8), series_levels)
+  cols   <- stats::setNames(c(RADAR_SERIES_COLOURS[seq_len(n_c)], "#7F7F7F"), series_levels)
+  shapes <- stats::setNames(c(RADAR_SERIES_SHAPES[seq_len(n_c)], NA), series_levels)
+  ltys   <- stats::setNames(c(rep("solid", n_c), "dashed"), series_levels)
+  lwds   <- stats::setNames(c(rep(0.9, n_c), 0.8), series_levels)
 
   ggplot2::ggplot() +
     ggplot2::geom_path(data = rings, ggplot2::aes(x, y, group = ring),
@@ -321,28 +321,20 @@ auto_limits <- function(norm, ref_value, step) {
   c(lo, lo + step * ceiling((hi - lo) / step))
 }
 
-# ---- Main entry point -------------------------------------------------------
+# ---- Main entry points ------------------------------------------------------
 
-#' Read a data file and produce one radar per group.
-#'
-#' @param path          CSV file (see read_radar_data()).
-#' @param out_dir       folder for the figures (NULL = do not save).
-#' @param normalisation "log2fc" (default) or "fc".
-#' @param show_stars    TRUE / FALSE.
-#' @param limits        c(min, max) of the scale; NULL = automatic, shared by
-#'                      all radars. The Excel template used c(-3, 10).
-#' @param step          spacing between grid rings; NULL = 2 in log2 FC,
-#'                      automatic in FC.
-#' @param formats       file formats to write ("png", "pdf", "svg", "tiff").
-#' @param width,height  figure size in inches.
-#' @param title         TRUE = group name as title, FALSE = no title.
-#' @return a named list of ggplot objects (one per group), invisibly.
-radar_from_file <- function(path, out_dir = "radar_plots/output",
-                            normalisation = c("log2fc", "fc"),
-                            show_stars = TRUE, limits = NULL, step = NULL,
-                            formats = c("png", "pdf"), width = 9, height = 6,
-                            dpi = 300, title = TRUE, clockwise = FALSE) {
+# Read, normalise and draw: shared by radar_build() and radar_plots().
+radar_prepare <- function(path, normalisation = c("log2fc", "fc"),
+                          show_stars = TRUE, limits = NULL, step = NULL,
+                          title = TRUE, clockwise = FALSE) {
   normalisation <- match.arg(normalisation)
+  if (is.character(limits)) limits <- parse_limits(limits)
+  if (!is.null(limits) && (length(limits) != 2 || !is.numeric(limits) ||
+                           anyNA(limits) || limits[1] >= limits[2]))
+    cli::cli_abort("{.arg limits} must be two increasing numbers, e.g. {.code c(-3, 10)}.")
+  if (!is.null(step) && (length(step) != 1 || !is.numeric(step) || is.na(step) || step <= 0))
+    cli::cli_abort("{.arg step} must be a positive number.")
+
   dat  <- read_radar_data(path)
   norm <- normalise_radar(dat, normalisation)
   ref_value <- if (normalisation == "fc") 1 else 0
@@ -354,12 +346,10 @@ radar_from_file <- function(path, out_dir = "radar_plots/output",
 
   outside <- norm < limits[1] | norm > limits[2]
   if (any(outside, na.rm = TRUE))
-    warning("Some values fall outside the scale ", limits[1], " to ", limits[2],
-            " and are drawn at its edge.")
+    cli::cli_warn("Some values fall outside the scale {limits[1]} to {limits[2]} and are drawn at its edge.")
 
-  groups <- unique(dat$conditions$group)
   plots <- list()
-  for (g in groups) {
+  for (g in unique(dat$conditions$group)) {
     rows <- which(dat$conditions$group == g)
     plots[[g]] <- plot_radar(
       norm = norm[rows, , drop = FALSE], stars = dat$stars[rows, , drop = FALSE],
@@ -369,28 +359,109 @@ radar_from_file <- function(path, out_dir = "radar_plots/output",
       clockwise = clockwise, title = if (isTRUE(title)) g else NULL
     )
   }
+  list(dat = dat, norm = norm, plots = plots, limits = limits,
+       normalisation = normalisation)
+}
 
-  if (!is.null(out_dir)) {
-    dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-    for (i in seq_along(plots)) {
-      slug <- gsub("[^A-Za-z0-9]+", "_", iconv(names(plots)[i], to = "ASCII//TRANSLIT"))
-      slug <- gsub("^_|_$", "", slug)
-      base <- file.path(out_dir, sprintf("radar_%02d_%s", i, slug))
-      for (f in formats) {
-        # cairo_pdf renders Greek letters (TNFα, IL-1β); the base pdf device does not.
-        dev <- if (f == "pdf" && capabilities("cairo")) grDevices::cairo_pdf else NULL
-        ggplot2::ggsave(paste0(base, ".", f), plots[[i]], device = dev,
-                        width = width, height = height, dpi = dpi, bg = "white")
-      }
+#' Build radar charts without writing them
+#'
+#' Reads a data file and returns one radar per group, as ggplot objects that
+#' can be further customised. See [radar_plots()] for the input format.
+#'
+#' @inheritParams radar_plots
+#' @return A named list of ggplot objects, one per group.
+#' @export
+#' @examples
+#' plots <- radar_build(system.file("extdata", "radar_example.csv", package = "labtools"))
+#' names(plots)
+radar_build <- function(path, normalisation = c("log2fc", "fc"),
+                        show_stars = TRUE, limits = NULL, step = NULL,
+                        title = TRUE, clockwise = FALSE) {
+  radar_prepare(path, normalisation = normalisation, show_stars = show_stars,
+                limits = limits, step = step, title = title,
+                clockwise = clockwise)$plots
+}
+
+#' Radar charts of mediators vs a reference condition
+#'
+#' Reads a CSV file of mean concentrations (cytokines) or peak areas
+#' (oxylipins), one row per condition, and writes one radar per group of
+#' conditions, as log2 fold change (or fold change) vs the reference row,
+#' plus the table of normalised values.
+#'
+#' Input layout (see `system.file("extdata", "radar_example.csv", package = "labtools")`):
+#' columns `Condition`, `Groupe`, one column per mediator (at least 3; column
+#' order = branch order) and optional `<mediator>_sig` columns (`*` to `****`).
+#' Exactly one row has `Groupe` = `Référence`. An optional `Catégorie` row
+#' gives `anti` / `pro` per mediator. Rows with `Groupe` = `Ne pas afficher`
+#' or empty are ignored. Comma-separated, or semicolon-separated with decimal
+#' comma (French Excel).
+#'
+#' Output files, in `out_dir`:
+#' * `radar_NN_<group>.<format>` for each group and each format;
+#' * `valeurs_normalisees_<normalisation>.csv`.
+#'
+#' @param path Input CSV file.
+#' @param out_dir Output folder, created if needed. Defaults to the current
+#'   working directory.
+#' @param normalisation `"log2fc"` (default) or `"fc"`.
+#' @param show_stars Show significance stars.
+#' @param limits `c(min, max)` of the scale, or a string `"min,max"`; `NULL`
+#'   or `""` (default) = automatic, shared by all radars. The Excel template
+#'   used `c(-3, 10)`.
+#' @param step Spacing between grid rings; `NULL` = 2 in log2 FC, automatic
+#'   in FC.
+#' @param formats Figure formats among `"png"`, `"pdf"`, `"svg"` (needs the
+#'   svglite package) and `"tiff"`.
+#' @param width,height Figure size in inches.
+#' @param dpi Resolution of raster formats.
+#' @param title `TRUE` = group name as title.
+#' @param clockwise `FALSE` (default): branches go counter-clockwise from the top.
+#' @return The absolute paths of the files created (character vector).
+#' @export
+#' @examples
+#' files <- radar_plots(
+#'   system.file("extdata", "radar_example.csv", package = "labtools"),
+#'   out_dir = tempfile("radar")
+#' )
+#' basename(files)
+radar_plots <- function(path, out_dir = ".", normalisation = c("log2fc", "fc"),
+                        show_stars = TRUE, limits = NULL, step = NULL,
+                        formats = c("png", "pdf"), width = 9, height = 6,
+                        dpi = 300, title = TRUE, clockwise = FALSE) {
+  formats <- check_formats(formats, RADAR_FORMATS)
+  if ("svg" %in% formats && !requireNamespace("svglite", quietly = TRUE))
+    cli::cli_abort(c("The {.val svg} format needs the {.pkg svglite} package.",
+                     "i" = "Install it with {.code install.packages(\"svglite\")}."))
+  out_dir <- resolve_out_dir(out_dir)
+
+  prep <- radar_prepare(path, normalisation = normalisation,
+                        show_stars = show_stars, limits = limits, step = step,
+                        title = title, clockwise = clockwise)
+  plots <- prep$plots
+
+  files <- character()
+  for (i in seq_along(plots)) {
+    slug <- gsub("[^A-Za-z0-9]+", "_", iconv(names(plots)[i], to = "ASCII//TRANSLIT"))
+    slug <- gsub("^_|_$", "", slug)
+    base <- file.path(out_dir, sprintf("radar_%02d_%s", i, slug))
+    for (f in formats) {
+      # cairo_pdf renders Greek letters (TNFα, IL-1β); the base pdf device does not.
+      dev <- if (f == "pdf" && capabilities("cairo")) grDevices::cairo_pdf else NULL
+      file <- paste0(base, ".", f)
+      ggplot2::ggsave(file, plots[[i]], device = dev,
+                      width = width, height = height, dpi = dpi, bg = "white")
+      files <- c(files, file)
     }
-    # Normalised table (equivalent of the "2_Normalisé" sheet), for traceability
-    tab <- data.frame(Condition = dat$conditions$condition,
-                      Groupe = dat$conditions$group, round(norm, 4),
-                      check.names = FALSE, row.names = NULL)
-    utils::write.csv(tab, file.path(out_dir, paste0("valeurs_normalisees_", normalisation, ".csv")),
-                     row.names = FALSE, fileEncoding = "UTF-8")
-    message("Radars written to ", normalizePath(out_dir), " (scale ",
-            limits[1], " to ", limits[2], ").")
   }
-  invisible(plots)
+  # Normalised table (equivalent of the "2_Normalisé" sheet), for traceability
+  tab <- data.frame(Condition = prep$dat$conditions$condition,
+                    Groupe = prep$dat$conditions$group, round(prep$norm, 4),
+                    check.names = FALSE, row.names = NULL)
+  csv <- file.path(out_dir, paste0("valeurs_normalisees_", prep$normalisation, ".csv"))
+  utils::write.csv(tab, csv, row.names = FALSE, fileEncoding = "UTF-8")
+  files <- c(files, csv)
+
+  cli::cli_inform(c("v" = "{length(plots)} radar{?s} written to {.path {out_dir}} (scale {prep$limits[1]} to {prep$limits[2]})."))
+  normalizePath(files)
 }

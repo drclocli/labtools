@@ -1,0 +1,31 @@
+Package: labtools
+Title: Lab Data Analysis Tools with Command Line Apps
+Version: 0.1.0
+Authors@R: 
+    person("drclocli", email = "torreschloe64@gmail.com", role = c("aut", "cre", "cph"))
+Description: Tools to analyse data produced in the lab. Each tool is an R
+    function that writes its results to an output folder and returns the
+    created file paths, plus a command line app built with 'Rapp'. Includes
+    radar charts of mediators (cytokines, oxylipins) as fold change vs a
+    reference condition.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Depends: 
+    R (>= 4.1)
+Imports:
+    cli,
+    ggplot2 (>= 3.5.0),
+    grDevices,
+    grid,
+    jsonlite,
+    Rapp (>= 0.4.0),
+    stats,
+    tools,
+    utils
+Suggests:
+    svglite,
+    testthat (>= 3.0.0),
+    withr
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.1
